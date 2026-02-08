@@ -63,6 +63,10 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include "laghos_solver.hpp"
+#include "fem/qinterp/eval.hpp"
+#include "fem/qinterp/det.hpp"
+#include "fem/qinterp/grad.hpp"
+#include "fem/integ/bilininteg_mass_kernels.hpp"
 #ifdef USE_CALIPER
 #include <caliper/cali.h>
 #include <adiak.hpp>
@@ -273,6 +277,39 @@ int main(int argc, char *argv[])
    backend.Configure(device, dev);
    if (Mpi::Root()) { backend.Print(); }
    backend.SetGPUAwareMPI(gpu_aware_mpi);
+
+   // Prepare the missing kernels.
+   if (myid == 0) { KernelReporter::Enable(); }
+   using TENS = QuadratureInterpolator::TensorEvalKernels;
+   using DET  = QuadratureInterpolator::DetKernels;
+   using GRAD = QuadratureInterpolator::GradKernels;
+   // 2D Q1Q0.
+   TENS::Specialization<2,QVectorLayout::byNODES,1,1,2>::Opt<1>::Add();
+   TENS::Specialization<2,QVectorLayout::byVDIM,1,1,2>::Opt<1>::Add();
+   TENS::Specialization<2,QVectorLayout::byVDIM,2,2,2>::Opt<1>::Add();
+   GRAD::Specialization<2,QVectorLayout::byVDIM,0,2,2,2>::Add();
+   // 2D Q2Q1 - ok.
+   // 2D Q3Q2 - ok.
+   // 2D Q4Q3.
+   TENS::Specialization<2,QVectorLayout::byNODES,1,4,8>::Opt<1>::Add();
+   TENS::Specialization<2,QVectorLayout::byVDIM,2,5,8>::Opt<1>::Add();
+   DET::Specialization<2,2,5,8>::Add();
+   GRAD::Specialization<2,QVectorLayout::byNODES,0,2,5,8>::Add();
+   MassIntegrator::AddSpecialization<2,4,8>();
+   MassIntegrator::AddSpecialization<2,5,8>();
+   // 3D Q1Q0.
+   TENS::Specialization<3,QVectorLayout::byNODES,1,1,2>::Opt<1>::Add();
+   TENS::Specialization<3,QVectorLayout::byVDIM,1,1,2>::Opt<1>::Add();
+   DET::Specialization<3,3,2,2>::Add();
+   GRAD::Specialization<3,QVectorLayout::byNODES,0,3,2,2>::Add();
+   GRAD::Specialization<3,QVectorLayout::byVDIM,0,3,2,2>::Add();
+   // 3D Q2Q1 - ok.
+   // 3D Q3Q2 - ok.
+   // 3D Q4Q3.
+   TENS::Specialization<3,QVectorLayout::byVDIM,3,5,8>::Opt<1>::Add();
+   DET::Specialization<3,3,5,8>::Add();
+   GRAD::Specialization<3,QVectorLayout::byNODES,0,3,5,8>::Add();
+   MassIntegrator::AddSpecialization<3,4,8>();
 
    // On all processors, use the default builtin 1D/2D/3D mesh or read the
    // serial one given on the command line.
