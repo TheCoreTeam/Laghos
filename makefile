@@ -229,23 +229,23 @@ checks: |$(foreach p,$(problems), $(foreach d,$(dims), $(foreach o,$(optioni), $
 tests:
 	cat << EOF > RESULTS.dat
 	$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(MFEM_MPI_NP) \
-	./laghos -p 0 -dim 2 -rs 3 -tf 0.75 -pa -vs 100 | tee RUN.dat
+	./laghos -p 0 -m data/square01_quad.mesh -rs 3 -tf 0.75 -pa -vs 100 | tee RUN.dat
 	cat RUN.dat | tail -n 21 | head -n 1 | \
 	awk '{ printf("step = %04d, dt = %s |e| = %.10e\n", $$2, $$8, $$11); }' >> RESULTS.dat
 	$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(MFEM_MPI_NP) \
-	./laghos -p 0 -dim 3 -rs 1 -tf 0.75 -pa -vs 100 | tee RUN.dat
+	./laghos -p 0 -m data/cube01_hex.mesh -rs 1 -tf 0.75 -pa -vs 100 | tee RUN.dat
 	cat RUN.dat | tail -n 21 | head -n 1 | \
 	awk '{ printf("step = %04d, dt = %s |e| = %.10e\n", $$2, $$8, $$11); }' >> RESULTS.dat
 	$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(MFEM_MPI_NP) \
-	./laghos -p 1 -dim 2 -rs 3 -tf 0.8 -pa -vs 100 | tee RUN.dat
+	./laghos -p 1 -m data/square01_quad.mesh -rs 3 -tf 0.8 -pa -vs 100 | tee RUN.dat
 	cat RUN.dat | tail -n 18 | head -n 1 | \
 	awk '{ printf("step = %04d, dt = %s |e| = %.10e\n", $$2, $$8, $$11); }' >> RESULTS.dat
 	$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(MFEM_MPI_NP) \
-	./laghos -p 1 -dim 3 -rs 2 -tf 0.6 -pa -vs 100 | tee RUN.dat
+	./laghos -p 1 -m data/cube01_hex.mesh -rs 2 -tf 0.6 -pa -vs 100 | tee RUN.dat
 	cat RUN.dat | tail -n 18 | head -n 1 | \
 	awk '{ printf("step = %04d, dt = %s |e| = %.10e\n", $$2, $$8, $$11); }' >> RESULTS.dat
 	$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(MFEM_MPI_NP) \
-	./laghos -p 2 -dim 1 -rs 5 -tf 0.2 -fa -vs 100 | tee RUN.dat
+	./laghos -p 2 -m data/segment01.mesh -rs 5 -tf 0.2 -fa -vs 100 | tee RUN.dat
 	cat RUN.dat | tail -n 18 | head -n 1 | \
 	awk '{ printf("step = %04d, dt = %s |e| = %.10e\n", $$2, $$8, $$11); }' >> RESULTS.dat
 	$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(MFEM_MPI_NP) \
