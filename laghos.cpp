@@ -298,14 +298,8 @@ int main(int argc, char *argv[])
          mesh.GetBdrElement(0)->SetAttribute(1);
          mesh.GetBdrElement(1)->SetAttribute(1);
       }
-      if (dim == 2)
-      {
-         AssignMeshBdrAttrs2D(mesh, 0.0, 1.0);
-      }
-      if (dim == 3)
-      {
-         AssignMeshBdrAttrs3D(mesh, 0.0, 1.0, 0.0, 1.0);
-      }
+      if (dim == 2) { AssignMeshBdrAttrs2D(mesh, 0.0, 1.0); }
+      if (dim == 3) { AssignMeshBdrAttrs3D(mesh, 0.0, 1.0, 0.0, 1.0); }
    }
    dim = mesh.Dimension();
 
