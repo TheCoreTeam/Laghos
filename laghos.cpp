@@ -305,7 +305,7 @@ int main(int argc, char *argv[])
    if (strncmp(mesh_file, "default", 7) != 0)
    {
 #ifndef MFEM_USE_METIS
-      MFEM_ABORT("MFEM has not been built with METIS. Use the "default" mesh.);
+      MFEM_ABORT("MFEM has not been built with METIS. Use the \"default\" mesh.");
 #endif
 
       // Read the serial mesh from the given mesh file on all processors.
