@@ -294,7 +294,7 @@ int main(int argc, char *argv[])
    // 3D Q3Q2 - ok.
    // 3D Q4Q3.
    TENS::Specialization<3,QVectorLayout::byVDIM,3,5,8>::Opt<1>::Add();
-   DET::Specialization<3,3,5,8>::Add();
+   // DET::Specialization<3,3,5,8>::Add(); // not enough shared memory.
    GRAD::Specialization<3,QVectorLayout::byNODES,0,3,5,8>::Add();
    MassIntegrator::AddSpecialization<3,4,8>();
 
