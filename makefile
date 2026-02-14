@@ -203,19 +203,25 @@ options=-fa -pa $(if $(USE_CUDA),-d_cuda) #-d_debug
 #optioni = $(shell for i in {1..$(words $(options))}; do echo $$i; done)
 
 # Laghos checks template - Targets
+# 1:problem, 2:dimension, 3:options, 4:ranks
 define laghos_checks_template
 .PHONY: laghos_$(1)_$(2)_$(3)_$(4)
 laghos_$(1)_$(2)_$(3)_$(4): laghos
-	$(eval name=laghos-x$(4)-p$(1)-$(2)D$(word $(3),$(options)))
-	$(eval command=$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(4) ./laghos $(OPTS) -p $(1) -dim $(2) $(shell echo $(word $(3),$(options))|$(SED) "s/-/ -/g"|$(SED) "s/_/ /g"))
-	@$(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(4) ./$$< $(OPTS) -p $(1) -dim $(2) $(shell echo $(word $(3),$(options))|$(SED) "s/-/ -/g"|$(SED) "s/_/ /g") > /dev/null 2>&1 && \
-	$(call COLOR_PRINT,'\033[0;32m',OK,': $(name)\n') || $(call COLOR_PRINT,'\033[1;31m',KO,': $(command)\n');
+	$(eval mesh_name := $(if $(filter 2,$(2)),square01_quad,cube01_hex))
+	$(eval mesh_file := data/$(mesh_name).mesh)
+	$(eval title := laghos-x$(4)-p$(1)-$(2)D$(word $(3),$(options)))
+	$(eval extra := $(shell echo $(word $(3),$(options)) | $(SED) "s/-/ -/g" | $(SED) "s/_/ /g"))
+	$(eval exec_cmd := ./laghos $(OPTS) -p $(1) -m $(mesh_file) $(extra))
+	$(eval full_cmd := $(MFEM_MPIEXEC) $(MFEM_MPIEXEC_NP) $(4) $(exec_cmd))
+	@$(full_cmd) > /dev/null 2>&1 && \
+	 $(call COLOR_PRINT,'\033[0;32m',OK,': $(title)\n') || \
+	 $(call COLOR_PRINT,'\033[1;31m',KO,': $(full_cmd)\n')
 endef
 # Generate all Laghos checks template targets
 $(foreach p, $(problems), $(foreach d, $(dims), $(foreach o, $(optioni), $(foreach r, $(ranks),\
 	$(eval $(call laghos_checks_template,$(p),$(d),$(o),$(r)))))))
 # Output info on all Laghos checks template targets
-#$(foreach p, $(problems), $(foreach d, $(dims), $(foreach o, $(optioni), $(foreach r, $(ranks),\
+# $(foreach p, $(problems), $(foreach d, $(dims), $(foreach o, $(optioni), $(foreach r, $(ranks),\
 #   $(info $(call laghos_checks_template,$(p),$(d),$(o),$(r)))))))
 checks: laghos
 checks: |$(foreach p,$(problems), $(foreach d,$(dims), $(foreach o,$(optioni), $(foreach r,$(ranks), laghos_$(p)_$(d)_$(o)_$(r)))))

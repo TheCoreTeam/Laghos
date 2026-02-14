@@ -54,6 +54,7 @@
 #include "fem/qinterp/det.hpp"
 #include "fem/qinterp/grad.hpp"
 #include "fem/integ/bilininteg_mass_kernels.hpp"
+
 #ifdef USE_CALIPER
 #include <caliper/cali.h>
 #include <adiak.hpp>
@@ -246,7 +247,10 @@ int main(int argc, char *argv[])
    const char * allocator_name = "laghos_device_alloc";
    size_t umpire_dev_pool_size = ((size_t) dev_pool_size) * 1024 * 1024 * 1024;
    size_t umpire_dev_block_size = 512;
-   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"), umpire_dev_pool_size, umpire_dev_block_size);
+   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name,
+                                                 rm.getAllocator("DEVICE"),
+                                                 umpire_dev_pool_size,
+                                                 umpire_dev_block_size);
 
 #ifdef HYPRE_USING_UMPIRE
    HYPRE_SetUmpireDevicePoolName(allocator_name);
@@ -357,8 +361,6 @@ int main(int argc, char *argv[])
    ParMesh pmesh(MPI_COMM_WORLD, mesh, mpi_partitioning.GetData());
    mesh.Clear();
    for (int lev = 0; lev < rp_levels; lev++) { pmesh.UniformRefinement(); }
-   MPI_Comm comm = pmesh.GetComm();
-   const int NE  = pmesh.GetNE();
 
    // Define the parallel finite element spaces. We use:
    // - H1 (Gauss-Lobatto, continuous) for position and velocity.
@@ -750,20 +752,22 @@ int main(int argc, char *argv[])
          double lnorm = e_gf * e_gf, norm;
          MPI_Allreduce(&lnorm, &norm, 1, MPI_DOUBLE, MPI_SUM, pmesh.GetComm());
          const double e_norm = sqrt(norm);
-         MFEM_VERIFY(rs_levels==0 && rp_levels==0, "check: rs, rp");
-         MFEM_VERIFY(order_v==2, "check: order_v");
-         MFEM_VERIFY(order_e==1, "check: order_e");
-         MFEM_VERIFY(ode_solver_type==4, "check: ode_solver_type");
+         MFEM_VERIFY(rs_levels == 0 && rp_levels == 0, "check: rs, rp");
+         MFEM_VERIFY(order_v == 2, "check: order_v");
+         MFEM_VERIFY(order_e == 1, "check: order_e");
+         MFEM_VERIFY(ode_solver_type == 4, "check: ode_solver_type");
          MFEM_VERIFY(t_final == 0.6, "check: t_final");
-         MFEM_VERIFY(cfl==0.5, "check: cfl");
-         MFEM_VERIFY(strncmp(mesh_file, "default", 7) == 0, "check: mesh_file");
-         MFEM_VERIFY(dim==2 || dim==3, "check: dimension");
+         MFEM_VERIFY(cfl == 0.5, "check: cfl");
+         MFEM_VERIFY(dim == 2 || dim == 3, "check: dimension");
+         MFEM_VERIFY(std::string(mesh_file) == "data/square01_quad.mesh" ||
+                     std::string(mesh_file) == "data/cube01_hex.mesh", "check: mesh_file");
          Checks(ti, e_norm, checks);
       }
    }
+
 #ifdef USE_CALIPER
-  CALI_CXX_MARK_LOOP_END(mainloop_annotation);
-  adiak::value("steps", ti);
+   CALI_CXX_MARK_LOOP_END(mainloop_annotation);
+   adiak::value("steps", ti);
 #endif
 
    MFEM_VERIFY(!check || checks == 2, "Check error!");
@@ -1040,7 +1044,6 @@ static long GetMaxRssMB()
 static void Checks(const int ti, const double nrm, int &chk)
 {
    const double eps = 1.e-13;
-   //printf("\033[33m%.15e\033[m\n",nrm);
 
    auto check = [&](int p, int i, const double res)
    {
@@ -1052,7 +1055,14 @@ static void Checks(const int ti, const double nrm, int &chk)
          return fmax(err_a, err_v) < eps;
       };
       if (problem == p && ti == i)
-      { chk++; MFEM_VERIFY(rerr(nrm, res, eps), "P"<<problem<<", #"<<i); }
+      {
+         chk++;
+         if (!rerr(nrm, res, eps))
+         {
+            printf("\033[33m%.15e\033[m\n",nrm);
+         }
+         MFEM_VERIFY(rerr(nrm, res, eps), "P"<<problem<<", #"<<i);
+      }
    };
 
    const double it_norms[2][8][2][2] = // dim, problem, {it,norm}
@@ -1083,11 +1093,11 @@ static void Checks(const int ti, const double nrm, int &chk)
    {
       for (int i=0; i<2; i++)
       {
-         const int it = it_norms[dim-2][p][i][0];
+         const int it = static_cast<int>(it_norms[dim-2][p][i][0]);
          const double norm = it_norms[dim-2][p][i][1];
          check(p, it, norm);
       }
-   }   
+   }
 }
 
 static void AssignMeshBdrAttrs2D(Mesh& mesh, real_t xmin, real_t xmax)
@@ -1114,7 +1124,7 @@ static void AssignMeshBdrAttrs2D(Mesh& mesh, real_t xmin, real_t xmax)
 }
 
 static void AssignMeshBdrAttrs3D(Mesh &mesh, real_t xmin, real_t xmax,
-                                             real_t ymin, real_t ymax)
+                                 real_t ymin, real_t ymax)
 {
    Vector pos(3);
    constexpr real_t tol = 1e-6;

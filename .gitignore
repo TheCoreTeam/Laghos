@@ -1,3 +1,5 @@
 /user.mk
 *.o
 /laghos
+user.cmake
+.DS_Store
