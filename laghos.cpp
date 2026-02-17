@@ -45,24 +45,16 @@
 //
 // Sample runs: see README.md, section 'Verification of Results'.
 //
-// Combinations resulting in 3D uniform Cartesian MPI partitionings of the mesh:
-// -m data/cube01_hex.mesh   -pt 211 for  2 / 16 / 128 / 1024 ... tasks.
-// -m data/cube_922_hex.mesh -pt 921 for    / 18 / 144 / 1152 ... tasks.
-// -m data/cube_522_hex.mesh -pt 522 for    / 20 / 160 / 1280 ... tasks.
-// -m data/cube_12_hex.mesh  -pt 311 for  3 / 24 / 192 / 1536 ... tasks.
-// -m data/cube01_hex.mesh   -pt 221 for  4 / 32 / 256 / 2048 ... tasks.
-// -m data/cube_922_hex.mesh -pt 922 for    / 36 / 288 / 2304 ... tasks.
-// -m data/cube_522_hex.mesh -pt 511 for  5 / 40 / 320 / 2560 ... tasks.
-// -m data/cube_12_hex.mesh  -pt 321 for  6 / 48 / 384 / 3072 ... tasks.
-// -m data/cube01_hex.mesh   -pt 111 for  8 / 64 / 512 / 4096 ... tasks.
-// -m data/cube_922_hex.mesh -pt 911 for  9 / 72 / 576 / 4608 ... tasks.
-// -m data/cube_522_hex.mesh -pt 521 for 10 / 80 / 640 / 5120 ... tasks.
-// -m data/cube_12_hex.mesh  -pt 322 for 12 / 96 / 768 / 6144 ... tasks.
 
 #include <fstream>
 #include <sys/time.h>
 #include <sys/resource.h>
 #include "laghos_solver.hpp"
+#include "fem/qinterp/eval.hpp"
+#include "fem/qinterp/det.hpp"
+#include "fem/qinterp/grad.hpp"
+#include "fem/integ/bilininteg_mass_kernels.hpp"
+
 #ifdef USE_CALIPER
 #include <caliper/cali.h>
 #include <adiak.hpp>
@@ -87,6 +79,9 @@ double rho0(const Vector &);
 double gamma_func(const Vector &);
 void v0(const Vector &, Vector &);
 
+static void AssignMeshBdrAttrs2D(Mesh &, real_t, real_t);
+static void AssignMeshBdrAttrs3D(Mesh &, real_t, real_t, real_t, real_t);
+
 static long GetMaxRssMB();
 static void display_banner(std::ostream&);
 static void Checks(const int ti, const double norm, int &checks);
@@ -105,6 +100,7 @@ int main(int argc, char *argv[])
    problem = 1;
    dim = 3;
    const char *mesh_file = "default";
+   int elem_per_mpi = 1;
    int rs_levels = 2;
    int rp_levels = 0;
    int nx = 2;
@@ -145,6 +141,8 @@ int main(int argc, char *argv[])
    OptionsParser args(argc, argv);
    args.AddOption(&dim, "-dim", "--dimension", "Dimension of the problem.");
    args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+   args.AddOption(&elem_per_mpi, "-epm", "--elem-per-mpi",
+                  "Number of element per mpi task.");
    args.AddOption(&nx, "-nx", "--xelems",
                   "Elements in x-dimension (do not specify mesh_file)");
    args.AddOption(&ny, "-ny", "--yelems",
@@ -249,7 +247,10 @@ int main(int argc, char *argv[])
    const char * allocator_name = "laghos_device_alloc";
    size_t umpire_dev_pool_size = ((size_t) dev_pool_size) * 1024 * 1024 * 1024;
    size_t umpire_dev_block_size = 512;
-   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name, rm.getAllocator("DEVICE"), umpire_dev_pool_size, umpire_dev_block_size);
+   rm.makeAllocator<umpire::strategy::QuickPool>(allocator_name,
+                                                 rm.getAllocator("DEVICE"),
+                                                 umpire_dev_pool_size,
+                                                 umpire_dev_block_size);
 
 #ifdef HYPRE_USING_UMPIRE
    HYPRE_SetUmpireDevicePoolName(allocator_name);
@@ -268,47 +269,67 @@ int main(int argc, char *argv[])
    if (Mpi::Root()) { backend.Print(); }
    backend.SetGPUAwareMPI(gpu_aware_mpi);
 
+   // Prepare the missing kernels.
+   if (myid == 0) { KernelReporter::Enable(); }
+   using TENS = QuadratureInterpolator::TensorEvalKernels;
+   using DET  = QuadratureInterpolator::DetKernels;
+   using GRAD = QuadratureInterpolator::GradKernels;
+   // 2D Q1Q0.
+   TENS::Specialization<2,QVectorLayout::byNODES,1,1,2>::Opt<1>::Add();
+   TENS::Specialization<2,QVectorLayout::byVDIM,1,1,2>::Opt<1>::Add();
+   TENS::Specialization<2,QVectorLayout::byVDIM,2,2,2>::Opt<1>::Add();
+   GRAD::Specialization<2,QVectorLayout::byVDIM,0,2,2,2>::Add();
+   // 2D Q2Q1 - ok.
+   // 2D Q3Q2 - ok.
+   // 2D Q4Q3.
+   TENS::Specialization<2,QVectorLayout::byNODES,1,4,8>::Opt<1>::Add();
+   TENS::Specialization<2,QVectorLayout::byVDIM,2,5,8>::Opt<1>::Add();
+   DET::Specialization<2,2,5,8>::Add();
+   GRAD::Specialization<2,QVectorLayout::byNODES,0,2,5,8>::Add();
+   MassIntegrator::AddSpecialization<2,4,8>();
+   MassIntegrator::AddSpecialization<2,5,8>();
+   // 3D Q1Q0.
+   TENS::Specialization<3,QVectorLayout::byNODES,1,1,2>::Opt<1>::Add();
+   TENS::Specialization<3,QVectorLayout::byVDIM,1,1,2>::Opt<1>::Add();
+   DET::Specialization<3,3,2,2>::Add();
+   GRAD::Specialization<3,QVectorLayout::byNODES,0,3,2,2>::Add();
+   GRAD::Specialization<3,QVectorLayout::byVDIM,0,3,2,2>::Add();
+   // 3D Q2Q1 - ok.
+   // 3D Q3Q2 - ok.
+   // 3D Q4Q3.
+   TENS::Specialization<3,QVectorLayout::byVDIM,3,5,8>::Opt<1>::Add();
+   // DET::Specialization<3,3,5,8>::Add(); // not enough shared memory.
+   GRAD::Specialization<3,QVectorLayout::byNODES,0,3,5,8>::Add();
+   MassIntegrator::AddSpecialization<3,4,8>();
+
    // On all processors, use the default builtin 1D/2D/3D mesh or read the
    // serial one given on the command line.
-   Mesh *mesh;
+   Mesh mesh;
+   Array<int> mpi_partitioning;
    if (strncmp(mesh_file, "default", 7) != 0)
    {
-      mesh = new Mesh(mesh_file, true, true);
+#ifndef MFEM_USE_METIS
+      MFEM_ABORT("MFEM has not been built with METIS. Use the \"default\" mesh.");
+#endif
+
+      // Read the serial mesh from the given mesh file on all processors.
+      // Refine the mesh in serial to increase the resolution.
+      mesh = Mesh::LoadFromFile(mesh_file, 1, 1);
+      for (int lev = 0; lev < rs_levels; lev++) { mesh.UniformRefinement(); }
    }
    else
    {
+      mesh = PartitionMPI(dim, Mpi::WorldSize(), elem_per_mpi, myid == 0,
+                          rp_levels, mpi_partitioning);
       if (dim == 1)
       {
-         mesh = new Mesh(Mesh::MakeCartesian1D(2));
-         mesh->GetBdrElement(0)->SetAttribute(1);
-         mesh->GetBdrElement(1)->SetAttribute(1);
+         mesh.GetBdrElement(0)->SetAttribute(1);
+         mesh.GetBdrElement(1)->SetAttribute(1);
       }
-      if (dim == 2)
-      {
-         mesh = new Mesh(Mesh::MakeCartesian2D(nx, ny, Element::QUADRILATERAL,
-                                               true));
-         const int NBE = mesh->GetNBE();
-         for (int b = 0; b < NBE; b++)
-         {
-            Element *bel = mesh->GetBdrElement(b);
-            const int attr = (b < NBE/2) ? 2 : 1;
-            bel->SetAttribute(attr);
-         }
-      }
-      if (dim == 3)
-      {
-         mesh = new Mesh(Mesh::MakeCartesian3D(nx, ny, nz, Element::HEXAHEDRON,
-                                               true));
-         const int NBE = mesh->GetNBE();
-         for (int b = 0; b < NBE; b++)
-         {
-            Element *bel = mesh->GetBdrElement(b);
-            const int attr = (b < NBE/3) ? 3 : (b < 2*NBE/3) ? 1 : 2;
-            bel->SetAttribute(attr);
-         }
-      }
+      if (dim == 2) { AssignMeshBdrAttrs2D(mesh, 0.0, 1.0); }
+      if (dim == 3) { AssignMeshBdrAttrs3D(mesh, 0.0, 1.0, 0.0, 1.0); }
    }
-   dim = mesh->Dimension();
+   dim = mesh.Dimension();
 
    // 1D vs partial assembly sanity check.
    if (p_assembly && dim == 1)
@@ -326,176 +347,35 @@ int main(int argc, char *argv[])
       {
          cout << "Using non-conforming mesh." << endl;
       }
-      mesh->EnsureNCMesh();
+      mesh.EnsureNCMesh();
    }
 
-   // Refine the mesh in serial to increase the resolution.
-   for (int lev = 0; lev < rs_levels; lev++) { mesh->UniformRefinement(); }
-   const int mesh_NE = mesh->GetNE();
+   const int mesh_NE = mesh.GetNE();
    if (Mpi::Root())
    {
       cout << "Number of zones in the serial mesh: " << mesh_NE << endl;
    }
 
    // Parallel partitioning of the mesh.
-   ParMesh *pmesh = nullptr;
-   const int num_tasks = Mpi::WorldSize(); int unit = 1;
-   int *nxyz = new int[dim];
-   switch (partition_type)
-   {
-      case 0:
-         for (int d = 0; d < dim; d++) { nxyz[d] = unit; }
-         break;
-      case 11:
-      case 111:
-         unit = static_cast<int>(floor(pow(num_tasks, 1.0 / dim) + 1e-2));
-         for (int d = 0; d < dim; d++) { nxyz[d] = unit; }
-         break;
-      case 21: // 2D
-         unit = static_cast<int>(floor(pow(num_tasks / 2, 1.0 / 2) + 1e-2));
-         nxyz[0] = 2 * unit; nxyz[1] = unit;
-         break;
-      case 31: // 2D
-         unit = static_cast<int>(floor(pow(num_tasks / 3, 1.0 / 2) + 1e-2));
-         nxyz[0] = 3 * unit; nxyz[1] = unit;
-         break;
-      case 32: // 2D
-         unit = static_cast<int>(floor(pow(2 * num_tasks / 3, 1.0 / 2) + 1e-2));
-         nxyz[0] = 3 * unit / 2; nxyz[1] = unit;
-         break;
-      case 49: // 2D
-         unit = static_cast<int>(floor(pow(9 * num_tasks / 4, 1.0 / 2) + 1e-2));
-         nxyz[0] = 4 * unit / 9; nxyz[1] = unit;
-         break;
-      case 51: // 2D
-         unit = static_cast<int>(floor(pow(num_tasks / 5, 1.0 / 2) + 1e-2));
-         nxyz[0] = 5 * unit; nxyz[1] = unit;
-         break;
-      case 211: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 2, 1.0 / 3) + 1e-2));
-         nxyz[0] = 2 * unit; nxyz[1] = unit; nxyz[2] = unit;
-         break;
-      case 221: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 4, 1.0 / 3) + 1e-2));
-         nxyz[0] = 2 * unit; nxyz[1] = 2 * unit; nxyz[2] = unit;
-         break;
-      case 311: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 3, 1.0 / 3) + 1e-2));
-         nxyz[0] = 3 * unit; nxyz[1] = unit; nxyz[2] = unit;
-         break;
-      case 321: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 6, 1.0 / 3) + 1e-2));
-         nxyz[0] = 3 * unit; nxyz[1] = 2 * unit; nxyz[2] = unit;
-         break;
-      case 322: // 3D.
-         unit = static_cast<int>(floor(pow(2 * num_tasks / 3, 1.0 / 3) + 1e-2));
-         nxyz[0] = 3 * unit / 2; nxyz[1] = unit; nxyz[2] = unit;
-         break;
-      case 432: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 3, 1.0 / 3) + 1e-2));
-         nxyz[0] = 2 * unit; nxyz[1] = 3 * unit / 2; nxyz[2] = unit;
-         break;
-      case 511: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 5, 1.0 / 3) + 1e-2));
-         nxyz[0] = 5 * unit; nxyz[1] = unit; nxyz[2] = unit;
-         break;
-      case 521: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 10, 1.0 / 3) + 1e-2));
-         nxyz[0] = 5 * unit; nxyz[1] = 2 * unit; nxyz[2] = unit;
-         break;
-      case 522: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 20, 1.0 / 3) + 1e-2));
-         nxyz[0] = 5 * unit; nxyz[1] = 2 * unit; nxyz[2] = 2 * unit;
-         break;
-      case 911: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 9, 1.0 / 3) + 1e-2));
-         nxyz[0] = 9 * unit; nxyz[1] = unit; nxyz[2] = unit;
-         break;
-      case 921: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 18, 1.0 / 3) + 1e-2));
-         nxyz[0] = 9 * unit; nxyz[1] = 2 * unit; nxyz[2] = unit;
-         break;
-      case 922: // 3D.
-         unit = static_cast<int>(floor(pow(num_tasks / 36, 1.0 / 3) + 1e-2));
-         nxyz[0] = 9 * unit; nxyz[1] = 2 * unit; nxyz[2] = 2 * unit;
-         break;
-      default:
-         if (myid == 0)
-         {
-            cout << "Unknown partition type: " << partition_type << '\n';
-         }
-         delete mesh;
-         MPI_Finalize();
-         return 3;
-   }
-   int product = 1;
-   for (int d = 0; d < dim; d++) { product *= nxyz[d]; }
-   const bool cartesian_partitioning = (cxyz.Size()>0)?true:false;
-   if (product == num_tasks || cartesian_partitioning)
-   {
-      if (cartesian_partitioning)
-      {
-         int cproduct = 1;
-         for (int d = 0; d < dim; d++) { cproduct *= cxyz[d]; }
-         MFEM_VERIFY(!cartesian_partitioning || cxyz.Size() == dim,
-                     "Expected " << mesh->SpaceDimension() << " integers with the "
-                     "option --cartesian-partitioning.");
-         MFEM_VERIFY(!cartesian_partitioning || num_tasks == cproduct,
-                     "Expected cartesian partitioning product to match number of ranks.");
-      }
-      int *partitioning = cartesian_partitioning ?
-                          mesh->CartesianPartitioning(cxyz):
-                          mesh->CartesianPartitioning(nxyz);
-      pmesh = new ParMesh(MPI_COMM_WORLD, *mesh, partitioning);
-      delete [] partitioning;
-   }
-   else
-   {
-      if (myid == 0)
-      {
-         cout << "Non-Cartesian partitioning through METIS will be used.\n";
-#ifndef MFEM_USE_METIS
-         cout << "MFEM was built without METIS. "
-              << "Adjust the number of tasks to use a Cartesian split." << endl;
-#endif
-      }
-#ifndef MFEM_USE_METIS
-      return 1;
-#endif
-      pmesh = new ParMesh(MPI_COMM_WORLD, *mesh);
-   }
-   delete [] nxyz;
-   delete mesh;
-
    // Refine the mesh further in parallel to increase the resolution.
-   for (int lev = 0; lev < rp_levels; lev++) { pmesh->UniformRefinement(); }
-
-   if (!cartesian_partitioning && enable_nc && dim > 1)
-   {
-      if (myid == 0) { cout << "Rebalancing mesh" << endl; }
-      pmesh->Rebalance();
-   }
-
-   int NE = pmesh->GetNE(), ne_min, ne_max;
-   MPI_Reduce(&NE, &ne_min, 1, MPI_INT, MPI_MIN, 0, pmesh->GetComm());
-   MPI_Reduce(&NE, &ne_max, 1, MPI_INT, MPI_MAX, 0, pmesh->GetComm());
-   if (myid == 0)
-   { cout << "Zones min/max: " << ne_min << " " << ne_max << endl; }
+   ParMesh pmesh(MPI_COMM_WORLD, mesh, mpi_partitioning.GetData());
+   mesh.Clear();
+   for (int lev = 0; lev < rp_levels; lev++) { pmesh.UniformRefinement(); }
 
    // Define the parallel finite element spaces. We use:
    // - H1 (Gauss-Lobatto, continuous) for position and velocity.
    // - L2 (Bernstein, discontinuous) for specific internal energy.
    L2_FECollection L2FEC(order_e, dim, BasisType::Positive);
    H1_FECollection H1FEC(order_v, dim);
-   ParFiniteElementSpace L2FESpace(pmesh, &L2FEC);
-   ParFiniteElementSpace H1FESpace(pmesh, &H1FEC, pmesh->Dimension());
+   ParFiniteElementSpace L2FESpace(&pmesh, &L2FEC);
+   ParFiniteElementSpace H1FESpace(&pmesh, &H1FEC, pmesh.Dimension());
 
    // Boundary conditions: all tests use v.n = 0 on the boundary, and we assume
    // that the boundaries are straight.
    Array<int> ess_tdofs, ess_vdofs;
    {
-      Array<int> ess_bdr(pmesh->bdr_attributes.Max()), dofs_marker, dofs_list;
-      for (int d = 0; d < pmesh->Dimension(); d++)
+      Array<int> ess_bdr(pmesh.bdr_attributes.Max()), dofs_marker, dofs_list;
+      for (int d = 0; d < pmesh.Dimension(); d++)
       {
          // Attributes 1/2/3 correspond to fixed-x/y/z boundaries,
          // i.e., we must enforce v_x/y/z = 0 for the velocity components.
@@ -509,7 +389,7 @@ int main(int argc, char *argv[])
    }
 
    // Define the explicit ODE solver used for time integration.
-   ODESolver *ode_solver = NULL;
+   ODESolver *ode_solver = nullptr;
    switch (ode_solver_type)
    {
       case 1: ode_solver = new ForwardEulerSolver; break;
@@ -523,7 +403,6 @@ int main(int argc, char *argv[])
          {
             cout << "Unknown ODE solver type: " << ode_solver_type << '\n';
          }
-         delete pmesh;
          MPI_Finalize();
          return 3;
    }
@@ -561,12 +440,12 @@ int main(int argc, char *argv[])
    e_gf.MakeRef(&L2FESpace, S, offset[2]);
 
    // Initialize x_gf using the starting mesh coordinates.
-   pmesh->SetNodalGridFunction(&x_gf);
+   pmesh.SetNodalGridFunction(&x_gf);
    // Sync the data location of x_gf with its base, S
    x_gf.SyncAliasMemory(S);
 
    // Initialize the velocity.
-   VectorFunctionCoefficient v_coeff(pmesh->Dimension(), v0);
+   VectorFunctionCoefficient v_coeff(pmesh.Dimension(), v0);
    v_gf.ProjectCoefficient(v_coeff);
    for (int i = 0; i < ess_vdofs.Size(); i++)
    {
@@ -583,8 +462,8 @@ int main(int argc, char *argv[])
    // time evolution.
    ParGridFunction rho0_gf(&L2FESpace);
    FunctionCoefficient rho0_coeff(rho0);
-   L2_FECollection l2_fec(order_e, pmesh->Dimension());
-   ParFiniteElementSpace l2_fes(pmesh, &l2_fec);
+   L2_FECollection l2_fec(order_e, dim);
+   ParFiniteElementSpace l2_fes(&pmesh, &l2_fec);
    ParGridFunction l2_rho0_gf(&l2_fes), l2_e(&l2_fes);
    l2_rho0_gf.ProjectCoefficient(rho0_coeff);
    rho0_gf.ProjectGridFunction(l2_rho0_gf);
@@ -606,8 +485,8 @@ int main(int argc, char *argv[])
 
    // Piecewise constant ideal gas coefficient over the Lagrangian mesh. The
    // gamma values are projected on function that's constant on the moving mesh.
-   L2_FECollection mat_fec(0, pmesh->Dimension());
-   ParFiniteElementSpace mat_fes(pmesh, &mat_fec);
+   L2_FECollection mat_fec(0, dim);
+   ParFiniteElementSpace mat_fes(&pmesh, &mat_fec);
    ParGridFunction mat_gf(&mat_fes);
    FunctionCoefficient mat_coeff(gamma_func);
    mat_gf.ProjectCoefficient(mat_coeff);
@@ -616,7 +495,7 @@ int main(int argc, char *argv[])
    int source = 0; bool visc = true, vorticity = false;
    switch (problem)
    {
-      case 0: if (pmesh->Dimension() == 2) { source = 1; } visc = false; break;
+      case 0: if (dim == 2) { source = 1; } visc = false; break;
       case 1: visc = true; break;
       case 2: visc = true; break;
       case 3: visc = true; S.HostRead(); break;
@@ -649,7 +528,7 @@ int main(int argc, char *argv[])
    {
       // Make sure all MPI ranks have sent their 'v' solution before initiating
       // another set of GLVis connections (one from each rank):
-      MPI_Barrier(pmesh->GetComm());
+      MPI_Barrier(pmesh.GetComm());
       vis_rho.precision(8);
       vis_v.precision(8);
       vis_e.precision(8);
@@ -670,7 +549,7 @@ int main(int argc, char *argv[])
    }
 
    // Save data for VisIt visualization.
-   VisItDataCollection visit_dc(basename, pmesh);
+   VisItDataCollection visit_dc(basename, &pmesh);
    if (visit)
    {
       visit_dc.RegisterField("Density",  &rho_gf);
@@ -767,17 +646,17 @@ int main(int argc, char *argv[])
       // Make sure that the mesh corresponds to the new solution state. This is
       // needed, because some time integrators use different S-type vectors
       // and the oper object might have redirected the mesh positions to those.
-      pmesh->NewNodes(x_gf, false);
+      pmesh.NewNodes(x_gf, false);
 
       if (last_step || (ti % vis_steps) == 0)
       {
          double lnorm = e_gf * e_gf, norm;
-         MPI_Allreduce(&lnorm, &norm, 1, MPI_DOUBLE, MPI_SUM, pmesh->GetComm());
+         MPI_Allreduce(&lnorm, &norm, 1, MPI_DOUBLE, MPI_SUM, pmesh.GetComm());
          if (mem_usage)
          {
             mem = GetMaxRssMB();
-            MPI_Reduce(&mem, &mmax, 1, MPI_LONG, MPI_MAX, 0, pmesh->GetComm());
-            MPI_Reduce(&mem, &msum, 1, MPI_LONG, MPI_SUM, 0, pmesh->GetComm());
+            MPI_Reduce(&mem, &mmax, 1, MPI_LONG, MPI_MAX, 0, pmesh.GetComm());
+            MPI_Reduce(&mem, &msum, 1, MPI_LONG, MPI_SUM, 0, pmesh.GetComm());
          }
          // const double internal_energy = hydro.InternalEnergy(e_gf);
          // const double kinetic_energy = hydro.KineticEnergy(v_gf);
@@ -807,7 +686,7 @@ int main(int argc, char *argv[])
 
          // Make sure all ranks have sent their 'v' solution before initiating
          // another set of GLVis connections (one from each rank):
-         MPI_Barrier(pmesh->GetComm());
+         MPI_Barrier(pmesh.GetComm());
 
          if (visualization || visit || gfprint) { hydro.ComputeDensity(rho_gf); }
          if (visualization)
@@ -847,7 +726,7 @@ int main(int argc, char *argv[])
 
             std::ofstream mesh_ofs(mesh_name.str().c_str());
             mesh_ofs.precision(8);
-            pmesh->PrintAsOne(mesh_ofs);
+            pmesh.PrintAsOne(mesh_ofs);
             mesh_ofs.close();
 
             std::ofstream rho_ofs(rho_name.str().c_str());
@@ -871,22 +750,24 @@ int main(int argc, char *argv[])
       if (check)
       {
          double lnorm = e_gf * e_gf, norm;
-         MPI_Allreduce(&lnorm, &norm, 1, MPI_DOUBLE, MPI_SUM, pmesh->GetComm());
+         MPI_Allreduce(&lnorm, &norm, 1, MPI_DOUBLE, MPI_SUM, pmesh.GetComm());
          const double e_norm = sqrt(norm);
-         MFEM_VERIFY(rs_levels==0 && rp_levels==0, "check: rs, rp");
-         MFEM_VERIFY(order_v==2, "check: order_v");
-         MFEM_VERIFY(order_e==1, "check: order_e");
-         MFEM_VERIFY(ode_solver_type==4, "check: ode_solver_type");
+         MFEM_VERIFY(rs_levels == 0 && rp_levels == 0, "check: rs, rp");
+         MFEM_VERIFY(order_v == 2, "check: order_v");
+         MFEM_VERIFY(order_e == 1, "check: order_e");
+         MFEM_VERIFY(ode_solver_type == 4, "check: ode_solver_type");
          MFEM_VERIFY(t_final == 0.6, "check: t_final");
-         MFEM_VERIFY(cfl==0.5, "check: cfl");
-         MFEM_VERIFY(strncmp(mesh_file, "default", 7) == 0, "check: mesh_file");
-         MFEM_VERIFY(dim==2 || dim==3, "check: dimension");
+         MFEM_VERIFY(cfl == 0.5, "check: cfl");
+         MFEM_VERIFY(dim == 2 || dim == 3, "check: dimension");
+         MFEM_VERIFY(std::string(mesh_file) == "data/square01_quad.mesh" ||
+                     std::string(mesh_file) == "data/cube01_hex.mesh", "check: mesh_file");
          Checks(ti, e_norm, checks);
       }
    }
+
 #ifdef USE_CALIPER
-  CALI_CXX_MARK_LOOP_END(mainloop_annotation);
-  adiak::value("steps", ti);
+   CALI_CXX_MARK_LOOP_END(mainloop_annotation);
+   adiak::value("steps", ti);
 #endif
 
    MFEM_VERIFY(!check || checks == 2, "Check error!");
@@ -905,8 +786,8 @@ int main(int argc, char *argv[])
    if (mem_usage)
    {
       mem = GetMaxRssMB();
-      MPI_Reduce(&mem, &mmax, 1, MPI_LONG, MPI_MAX, 0, pmesh->GetComm());
-      MPI_Reduce(&mem, &msum, 1, MPI_LONG, MPI_SUM, 0, pmesh->GetComm());
+      MPI_Reduce(&mem, &mmax, 1, MPI_LONG, MPI_MAX, 0, pmesh.GetComm());
+      MPI_Reduce(&mem, &msum, 1, MPI_LONG, MPI_SUM, 0, pmesh.GetComm());
    }
 
    const double energy_final = hydro.InternalEnergy(e_gf) +
@@ -950,7 +831,6 @@ int main(int argc, char *argv[])
 
    // Free the used memory.
    delete ode_solver;
-   delete pmesh;
 
    return 0;
 }
@@ -1164,7 +1044,6 @@ static long GetMaxRssMB()
 static void Checks(const int ti, const double nrm, int &chk)
 {
    const double eps = 1.e-13;
-   //printf("\033[33m%.15e\033[m\n",nrm);
 
    auto check = [&](int p, int i, const double res)
    {
@@ -1176,7 +1055,14 @@ static void Checks(const int ti, const double nrm, int &chk)
          return fmax(err_a, err_v) < eps;
       };
       if (problem == p && ti == i)
-      { chk++; MFEM_VERIFY(rerr(nrm, res, eps), "P"<<problem<<", #"<<i); }
+      {
+         chk++;
+         if (!rerr(nrm, res, eps))
+         {
+            printf("\033[33m%.15e\033[m\n",nrm);
+         }
+         MFEM_VERIFY(rerr(nrm, res, eps), "P"<<problem<<", #"<<i);
+      }
    };
 
    const double it_norms[2][8][2][2] = // dim, problem, {it,norm}
@@ -1207,9 +1093,60 @@ static void Checks(const int ti, const double nrm, int &chk)
    {
       for (int i=0; i<2; i++)
       {
-         const int it = it_norms[dim-2][p][i][0];
+         const int it = static_cast<int>(it_norms[dim-2][p][i][0]);
          const double norm = it_norms[dim-2][p][i][1];
          check(p, it, norm);
       }
+   }
+}
+
+static void AssignMeshBdrAttrs2D(Mesh& mesh, real_t xmin, real_t xmax)
+{
+   Vector pos(3);
+   constexpr real_t tol = 1e-6;
+   const int NBE = mesh.GetNBE();
+   IntegrationPoint center;
+   center.x = 0.5;
+   center.y = 0.5;
+   center.z = 0.5;
+   for (int b = 0; b < NBE; b++)
+   {
+      Element *bel = mesh.GetBdrElement(b);
+      auto eltrans = mesh.GetBdrElementTransformation(b);
+      eltrans->Transform(center, pos);
+      int attr = 2;
+      if (pos[0] <= xmin + tol || pos[0] >= xmax - tol)
+      {
+         attr = 1;
+      }
+      bel->SetAttribute(attr);
+   }
+}
+
+static void AssignMeshBdrAttrs3D(Mesh &mesh, real_t xmin, real_t xmax,
+                                 real_t ymin, real_t ymax)
+{
+   Vector pos(3);
+   constexpr real_t tol = 1e-6;
+   const int NBE = mesh.GetNBE();
+   IntegrationPoint center;
+   center.x = 0.5;
+   center.y = 0.5;
+   center.z = 0.5;
+   for (int b = 0; b < NBE; b++)
+   {
+      Element *bel = mesh.GetBdrElement(b);
+      auto eltrans = mesh.GetBdrElementTransformation(b);
+      eltrans->Transform(center, pos);
+      int attr = 3;
+      if (pos[0] <= xmin + tol || pos[0] >= xmax - tol)
+      {
+         attr = 1;
+      }
+      else if (pos[1] <= ymin + tol || pos[1] >= ymax - tol)
+      {
+         attr = 2;
+      }
+      bel->SetAttribute(attr);
    }
 }

@@ -231,8 +231,8 @@ partial assembly option (`-pa`).
 
 Some sample runs in 2D and 3D respectively are:
 ```sh
-mpirun -np 8 ./laghos -p 1 -dim 2 -rs 3 -tf 0.8 -pa
-mpirun -np 8 ./laghos -p 1 -dim 3 -rs 2 -tf 0.6 -pa -vis
+mpirun -np 8 ./laghos -p 1 -m data/square01_quad.mesh -rs 3 -tf 0.8 -pa
+mpirun -np 8 ./laghos -p 1 -m data/cube01_hex.mesh -rs 2 -tf 0.6 -pa -vis
 ```
 
 The latter produces the following density plot (notice the `-vis` option)
@@ -248,8 +248,8 @@ evaluation. (Viscosity can still be activated for these problems with the
 
 Some sample runs in 2D and 3D respectively are:
 ```sh
-mpirun -np 8 ./laghos -p 0 -dim 2 -rs 3 -tf 0.5 -pa
-mpirun -np 8 ./laghos -p 0 -dim 3 -rs 1 -tf 0.25 -pa
+mpirun -np 8 ./laghos -p 0 -m data/square01_quad.mesh -rs 3 -tf 0.5 -pa
+mpirun -np 8 ./laghos -p 0 -m data/cube01_hex.mesh -rs 1 -tf 0.25 -pa
 mpirun -np 8 ./laghos -p 4 -m data/square_gresho.mesh -rs 3 -ok 3 -ot 2 -tf 0.62 -s 7 -vis -pa
 ```
 
@@ -280,11 +280,11 @@ The latter produces the following specific internal energy plot (notice the `-vi
 To make sure the results are correct, we tabulate reference final iterations
 (`step`), time steps (`dt`) and energies (`|e|`) for the runs listed below:
 
-1. `mpirun -np 8 ./laghos -p 0 -dim 2 -rs 3 -tf 0.75 -pa`
-2. `mpirun -np 8 ./laghos -p 0 -dim 3 -rs 1 -tf 0.75 -pa`
-3. `mpirun -np 8 ./laghos -p 1 -dim 2 -rs 3 -tf 0.8 -pa`
-4. `mpirun -np 8 ./laghos -p 1 -dim 3 -rs 2 -tf 0.6 -pa`
-5. `mpirun -np 8 ./laghos -p 2 -dim 1 -rs 5 -tf 0.2 -fa`
+1. `mpirun -np 8 ./laghos -p 0 -m data/square01_quad.mesh -rs 3 -tf 0.75 -pa`
+2. `mpirun -np 8 ./laghos -p 0 -m data/cube01_hex.mesh -rs 1 -tf 0.75 -pa`
+3. `mpirun -np 8 ./laghos -p 1 -m data/square01_quad.mesh -rs 3 -tf 0.8 -pa`
+4. `mpirun -np 8 ./laghos -p 1 -m data/cube01_hex.mesh -rs 2 -tf 0.6 -pa`
+5. `mpirun -np 8 ./laghos -p 2 -m data/segment01.mesh -rs 5 -tf 0.2 -fa`
 6. `mpirun -np 8 ./laghos -p 3 -m data/rectangle01_quad.mesh -rs 2 -tf 3.0 -pa`
 7. `mpirun -np 8 ./laghos -p 3 -m data/box01_hex.mesh -rs 1 -tf 5.0 -pa`
 8. `mpirun -np 8 ./laghos -p 4 -m data/square_gresho.mesh -rs 3 -ok 3 -ot 2 -tf 0.62831853 -s 7 -pa`
@@ -304,10 +304,10 @@ To make sure the results are correct, we tabulate reference final iterations
 
 Similar GPU runs using the MFEM CUDA *device* can be run as follows:
 
-1. `./laghos -p 0 -dim 2 -rs 3 -tf 0.75 -pa -d cuda`
-2. `./laghos -p 0 -dim 3 -rs 1 -tf 0.75 -pa -d cuda`
-3. `./laghos -p 1 -dim 2 -rs 3 -tf 0.80 -pa -d cuda`
-4. `./laghos -p 1 -dim 3 -rs 2 -tf 0.60 -pa -d cuda`
+1. `./laghos -p 0 -m data/square01_quad.mesh -rs 3 -tf 0.75 -pa -d cuda`
+2. `./laghos -p 0 -m data/cube01_hex.mesh -rs 1 -tf 0.75 -pa -d cuda`
+3. `./laghos -p 1 -m data/square01_quad.mesh -rs 3 -tf 0.80 -pa -d cuda`
+4. `./laghos -p 1 -m data/cube01_hex.mesh -rs 2 -tf 0.60 -pa -d cuda`
 5. -- this is a 1D test that is not supported on the device --
 6. `./laghos -p 3 -m data/rectangle01_quad.mesh -rs 2 -tf 3.0 -pa -d cuda`
 7. `./laghos -p 3 -m data/box01_hex.mesh -rs 1 -tf 5.0 -pa -cgt 1e-12 -d cuda`
@@ -336,23 +336,14 @@ Laghos also reports the total rate for these major kernels, which is a proposed
 allocation, the FOM should be reported for different problem sizes and finite
 element orders.
 
-A sample run on the [Vulcan](https://computation.llnl.gov/computers/vulcan) BG/Q
-machine at LLNL is:
-
-```
-srun -n 294912 laghos -pa -p 1 -tf 0.6 -pt 911 -m data/cube_922_hex.mesh \
-                      --ode-solver 7 --max-steps 4
-                      --cg-tol 0 --cg-max-iter 50 -ok 3 -ot 2 -rs 5 -rp 2
-```
-This is Q3-Q2 3D computation on 294,912 MPI ranks (18,432 nodes) that produces
-rates of approximately 125419, 55588, and 12674 megadofs, and a total FOM of
-about 2064 megadofs.
-
-To make the above run 8 times bigger, one can either weak scale by using 8 times
-as many MPI tasks and increasing the number of serial refinements: `srun -n
-2359296 ... -rs 6 -rp 2`, or use the same number of MPI tasks but increase the
-local problem on each of them by doing more parallel refinements: `srun -n
-294912 ... -rs 5 -rp 3`.
+For controlled performance scaling, use (-dim) to select the problem dimension
+and (-epm) to set the number of elements per MPI task, instead of providing a
+mesh with (-m). The code then automatically generates and partitions a
+[0, 1]^dim quad/hex mesh. Performance is determined by the device (-d), task
+count (-n), elements per task (-epm), and finite-element orders (-ok and -ot).
+The total problem size is (-n) × (-epm), with higher order increasing the work
+per element. Weak scaling varies (-n) at fixed (-epm), while strong scaling
+keeps (-n) × (-epm) constant.
 
 ## Versions
 

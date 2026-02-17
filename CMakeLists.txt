@@ -14,6 +14,13 @@ if(NOT CMAKE_CONFIGURATION_TYPES)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
+# Load 'user.cmake' settings file if it exists
+set(USER_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/user.cmake" CACHE PATH "Path to user configuration file" FORCE)
+include("${USER_CONFIG}" OPTIONAL RESULT_VARIABLE USER_CONFIG_LOADED)
+if (USER_CONFIG_LOADED)
+  message(STATUS "USER_CONFIG = ${USER_CONFIG} (LOADED)")
+endif()
+
 find_package(HYPRE REQUIRED)
 find_package(MFEM REQUIRED)
 find_package(MPI REQUIRED)
