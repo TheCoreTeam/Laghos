@@ -102,21 +102,21 @@ static void Rho0DetJ0Vol(const int dim, const int NE,
                          double &volume);
 
 LagrangianHydroOperator::LagrangianHydroOperator(const int size,
-                                                 ParFiniteElementSpace &h1,
-                                                 ParFiniteElementSpace &l2,
-                                                 const Array<int> &ess_tdofs,
-                                                 Coefficient &rho0_coeff,
-                                                 ParGridFunction &rho0_gf,
-                                                 ParGridFunction &gamma_gf,
-                                                 const int source,
-                                                 const double cfl,
-                                                 const bool visc,
-                                                 const bool vort,
-                                                 const bool p_assembly,
-                                                 const double cgt,
-                                                 const int cgiter,
-                                                 double ftz,
-                                                 const int oq) :
+      ParFiniteElementSpace &h1,
+      ParFiniteElementSpace &l2,
+      const Array<int> &ess_tdofs,
+      Coefficient &rho0_coeff,
+      ParGridFunction &rho0_gf,
+      ParGridFunction &gamma_gf,
+      const int source,
+      const double cfl,
+      const bool visc,
+      const bool vort,
+      const bool p_assembly,
+      const double cgt,
+      const int cgiter,
+      double ftz,
+      const int oq) :
    TimeDependentOperator(size),
    H1(h1), L2(l2), H1c(H1.GetParMesh(), H1.FEColl(), 1),
    pmesh(H1.GetParMesh()),
@@ -327,7 +327,7 @@ void LagrangianHydroOperator::Mult(const Vector &S, Vector &dS_dt) const
 }
 
 void LagrangianHydroOperator::SolveVelocity(const Vector &S,
-                                            Vector &dS_dt) const
+      Vector &dS_dt) const
 {
    UpdateQuadratureData(S);
    AssembleForceMatrix();
@@ -440,7 +440,7 @@ void LagrangianHydroOperator::SolveVelocity(const Vector &S,
 }
 
 void LagrangianHydroOperator::SolveEnergy(const Vector &S, const Vector &v,
-                                          Vector &dS_dt) const
+      Vector &dS_dt) const
 {
    UpdateQuadratureData(S);
    AssembleForceMatrix();
@@ -697,7 +697,7 @@ double LagrangianHydroOperator::KineticEnergy(const ParGridFunction &v) const
 }
 
 void LagrangianHydroOperator::PrintTimingData(bool IamRoot, int steps,
-                                              const bool fom) const
+      const bool fom) const
 {
    const MPI_Comm com = H1.GetComm();
    double my_rt[5], T[5];
@@ -890,7 +890,7 @@ void LagrangianHydroOperator::UpdateQuadratureData(const Vector &S) const
             const DenseMatrix &Jpr = Jpr_b[z](q);
             CalcInverse(Jpr, Jinv);
             const double detJ = Jpr.Det(), rho = rho_b[z*nqp + q],
-                         p = p_b[z*nqp + q], sound_speed = cs_b[z*nqp + q];
+                                           p = p_b[z*nqp + q], sound_speed = cs_b[z*nqp + q];
             stress = 0.0;
             for (int d = 0; d < dim; d++) { stress(d, d) = -p; }
             double visc_coeff = 0.0;
@@ -965,7 +965,7 @@ void LagrangianHydroOperator::UpdateQuadratureData(const Vector &S) const
                for (int gd = 0; gd < dim; gd++)
                {
                   qdata.stressJinvT(vd)(z_id*nqp + q, gd) =
-                     stressJiT(vd, gd);
+                          stressJiT(vd, gd);
                }
             }
          }
@@ -1039,11 +1039,10 @@ double FNorm(const T * __restrict__ data)
    return s*sqrt(n2);
 }
 
-template<int DIM> MFEM_HOST_DEVICE static inline
+template<int DIM, bool use_viscosity, bool use_vorticity> MFEM_HOST_DEVICE
+static inline
 void QUpdateBody(const int NE, const int e,
                  const int NQ, const int q,
-                 const bool use_viscosity,
-                 const bool use_vorticity,
                  const double h0,
                  const double h1order,
                  const double cfl,
@@ -1260,14 +1259,11 @@ static void Rho0DetJ0Vol(const int dim, const int NE,
    volume = vol * one;
 }
 
-template<int DIM, int Q1D> static inline
+template<int DIM, int Q1D, bool use_viscosity, bool use_vorticity> static inline
 void QKernel(const int NE, const int NQ,
-             const bool use_viscosity,
-             const bool use_vorticity,
              const double h0,
              const double h1order,
              const double cfl,
-             const double infinity,
              const ParGridFunction &gamma_gf,
              const Array<double> &weights,
              const Vector &Jacobians,
@@ -1288,6 +1284,8 @@ void QKernel(const int NE, const int NQ,
    const auto d_Jac0inv = Read(Jac0inv.GetMemory(), Jac0inv.TotalSize());
    auto d_dt_est = dt_est.ReadWrite();
    auto d_stressJinvT = Write(stressJinvT.GetMemory(), stressJinvT.TotalSize());
+
+   constexpr double infinity = std::numeric_limits<double>::infinity();
    if (DIM == 2)
    {
       MFEM_FORALL_2D(e, NE, Q1D, Q1D, 1,
@@ -1305,13 +1303,13 @@ void QKernel(const int NE, const int NQ,
          {
             MFEM_FOREACH_THREAD(qy,y,Q1D)
             {
-               QUpdateBody<DIM>(NE, e, NQ, qx + qy * Q1D,
-                                use_viscosity, use_vorticity, h0, h1order, cfl, infinity,
-                                Jinv, stress, sgrad_v, eig_val_data, eig_vec_data,
-                                compr_dir, Jpi, ph_dir, stressJiT,
-                                d_gamma, d_weights, d_Jacobians, d_rho0DetJ0w,
-                                d_e_quads, d_grad_v_ext, d_Jac0inv,
-                                d_dt_est, d_stressJinvT);
+               QUpdateBody<DIM, use_viscosity, use_vorticity>(NE, e, NQ,
+                   qx + qy * Q1D, h0, h1order, cfl, infinity,
+                     Jinv, stress, sgrad_v, eig_val_data, eig_vec_data,
+                     compr_dir, Jpi, ph_dir, stressJiT,
+                     d_gamma, d_weights, d_Jacobians, d_rho0DetJ0w,
+                     d_e_quads, d_grad_v_ext, d_Jac0inv,
+                     d_dt_est, d_stressJinvT);
             }
          }
          MFEM_SYNC_THREAD;
@@ -1336,13 +1334,14 @@ void QKernel(const int NE, const int NQ,
             {
                MFEM_FOREACH_THREAD(qz,z,Q1D)
                {
-                  QUpdateBody<DIM>(NE, e, NQ, qx + Q1D * (qy + qz * Q1D),
-                                   use_viscosity, use_vorticity, h0, h1order, cfl, infinity,
-                                   Jinv, stress, sgrad_v, eig_val_data, eig_vec_data,
-                                   compr_dir, Jpi, ph_dir, stressJiT,
-                                   d_gamma, d_weights, d_Jacobians, d_rho0DetJ0w,
-                                   d_e_quads, d_grad_v_ext, d_Jac0inv,
-                                   d_dt_est, d_stressJinvT);
+                  QUpdateBody<DIM, use_viscosity, use_vorticity>(NE, e, NQ,
+                        qx + Q1D * (qy + qz * Q1D),
+                        h0, h1order, cfl, infinity,
+                        Jinv, stress, sgrad_v, eig_val_data, eig_vec_data,
+                        compr_dir, Jpi, ph_dir, stressJiT,
+                        d_gamma, d_weights, d_Jacobians, d_rho0DetJ0w,
+                        d_e_quads, d_grad_v_ext, d_Jac0inv,
+                        d_dt_est, d_stressJinvT);
                }
             }
          }
@@ -1359,7 +1358,6 @@ void QUpdate::UpdateQuadratureData(const Vector &S, QuadratureData &qdata)
    Vector* S_p = const_cast<Vector*>(&S);
    const int H1_size = H1.GetVSize();
    const double h1order = (double) H1.GetOrder(0);
-   const double infinity = std::numeric_limits<double>::infinity();
    ParGridFunction x, v, e;
    x.MakeRef(&H1,*S_p, 0);
    H1R->Mult(x, e_vec);
@@ -1372,12 +1370,11 @@ void QUpdate::UpdateQuadratureData(const Vector &S, QuadratureData &qdata)
    q2->SetOutputLayout(QVectorLayout::byVDIM);
    q2->Values(e, q_e);
    q_dt_est = qdata.dt_est;
-   const int id = (dim << 4) | Q1D;
+   const int id = (dim << 12) | (Q1D << 8) | (use_viscosity << 4) |
+                  (use_vorticity);
    typedef void (*fQKernel)(const int NE, const int NQ,
-                            const bool use_viscosity,
-                            const bool use_vorticity,
                             const double h0, const double h1order,
-                            const double cfl, const double infinity,
+                            const double cfl,
                             const ParGridFunction &gamma_gf,
                             const Array<double> &weights,
                             const Vector &Jacobians, const Vector &rho0DetJ0w,
@@ -1387,20 +1384,58 @@ void QUpdate::UpdateQuadratureData(const Vector &S, QuadratureData &qdata)
    static std::unordered_map<int, fQKernel> qupdate =
    {
       // 2D.
-      {0x22,&QKernel<2,2>},
-      {0x24,&QKernel<2,4>}, {0x26,&QKernel<2,6>},
-      {0x28,&QKernel<2,8>}, {0x2A,&QKernel<2,10>},
+      {0x2200,&QKernel<2,2, false, false>},
+      {0x2201,&QKernel<2,2, false, true>},
+      {0x2210,&QKernel<2,2, true, false>},
+      {0x2211,&QKernel<2,2, true, true>},
+
+      {0x2400,&QKernel<2,4, false, false>},
+      {0x2401,&QKernel<2,4, false, true>},
+      {0x2410,&QKernel<2,4, true, false>},
+      {0x2411,&QKernel<2,4, true, true>},
+
+      {0x2600,&QKernel<2,6, false, false>},
+      {0x2601,&QKernel<2,6, false, true>},
+      {0x2610,&QKernel<2,6, true, false>},
+      {0x2611,&QKernel<2,6, true, true>},
+
+      {0x2800,&QKernel<2,8, false, false>},
+      {0x2801,&QKernel<2,8, false, true>},
+      {0x2810,&QKernel<2,8, true, false>},
+      {0x2811,&QKernel<2,8, true, true>},
+
+      {0x2A00,&QKernel<2,10, false, false>},
+      {0x2A01,&QKernel<2,10, false, true>},
+      {0x2A10,&QKernel<2,10, true, false>},
+      {0x2A11,&QKernel<2,10, true, true>},
       // 3D.
-      {0x32,&QKernel<3,2>}, {0x34,&QKernel<3,4>},
-      {0x36,&QKernel<3,6>}, {0x38,&QKernel<3,8>}
+      {0x3200,&QKernel<3,2, false, false>},
+      {0x3201,&QKernel<3,2, false, true>},
+      {0x3210,&QKernel<3,2, true, false>},
+      {0x3211,&QKernel<3,2, true, true>},
+
+      {0x3400,&QKernel<3,4, false, false>},
+      {0x3401,&QKernel<3,4, false, true>},
+      {0x3410,&QKernel<3,4, true, false>},
+      {0x3411,&QKernel<3,4, true, true>},
+
+      {0x3600,&QKernel<3,6, false, false>},
+      {0x3601,&QKernel<3,6, false, true>},
+      {0x3610,&QKernel<3,6, true, false>},
+      {0x3611,&QKernel<3,6, true, true>},
+
+      {0x3800,&QKernel<3,8, false, false>},
+      {0x3801,&QKernel<3,8, false, true>},
+      {0x3810,&QKernel<3,8, true, false>},
+      {0x3811,&QKernel<3,8, true, true>}
    };
    if (!qupdate[id])
    {
       mfem::out << "Unknown kernel 0x" << std::hex << id << std::endl;
       MFEM_ABORT("Unknown kernel");
    }
-   qupdate[id](NE, NQ, use_viscosity, use_vorticity, qdata.h0, h1order,
-               cfl, infinity, gamma_gf, ir.GetWeights(), q_dx,
+   qupdate[id](NE, NQ, qdata.h0, h1order,
+               cfl, gamma_gf, ir.GetWeights(), q_dx,
                qdata.rho0DetJ0w, q_e, q_dv,
                qdata.Jac0inv, q_dt_est, qdata.stressJinvT);
    qdata.dt_est = q_dt_est.Min();

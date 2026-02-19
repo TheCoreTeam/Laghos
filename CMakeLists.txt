@@ -21,8 +21,10 @@ if (USER_CONFIG_LOADED)
   message(STATUS "USER_CONFIG = ${USER_CONFIG} (LOADED)")
 endif()
 
-find_package(HYPRE REQUIRED)
-find_package(MFEM REQUIRED)
+if (PROJECT_IS_TOP_LEVEL)
+  find_package(HYPRE REQUIRED)
+  find_package(MFEM REQUIRED)
+endif ()
 find_package(MPI REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to use.")
@@ -69,10 +71,18 @@ endif()
 
 add_executable(laghos ${SOURCES})
 
-target_include_directories(laghos PUBLIC "${MFEM_DIR}/../../../include/mfem")
-
-target_link_libraries(laghos
-  PUBLIC mfem
-  PUBLIC MPI::MPI_CXX
-  PUBLIC HYPRE::HYPRE
-)
+if (PROJECT_IS_TOP_LEVEL)
+  target_include_directories(laghos PUBLIC "${MFEM_DIR}/../../../include/mfem")
+  target_link_libraries(laghos
+          PUBLIC mfem
+          PUBLIC MPI::MPI_CXX
+          PUBLIC HYPRE::HYPRE
+          PUBLIC HYPRE
+  )
+else ()
+  target_include_directories(laghos PUBLIC ${PROJECT_BINARY_DIR}/../../config/)
+  target_link_libraries(laghos
+          PUBLIC mfem
+          PUBLIC MPI::MPI_CXX
+  )
+endif ()
